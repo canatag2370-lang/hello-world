@@ -100,16 +100,35 @@ class FaceDistanceEstimator:
         return DetectionResult(bbox=bbox, distance_cm=distance_cm, nose=nose_point)
 
 
+def _draw_crosshair(
+    frame,
+    center: Tuple[int, int],
+    *,
+    color: Tuple[int, int, int] = (255, 0, 255),
+    arm_length: int = 18,
+    gap: int = 6,
+    thickness: int = 4,
+) -> None:
+    """Draw a four-armed crosshair with a center gap."""
+
+    x, y = center
+
+    # Horizontal arms
+    cv2.line(frame, (x - arm_length, y), (x - gap, y), color, thickness)
+    cv2.line(frame, (x + gap, y), (x + arm_length, y), color, thickness)
+
+    # Vertical arms
+    cv2.line(frame, (x, y - arm_length), (x, y - gap), color, thickness)
+    cv2.line(frame, (x, y + gap), (x, y + arm_length), color, thickness)
+
+
 def draw_overlays(frame, detection: DetectionResult) -> None:
     min_x, min_y, max_x, max_y = detection.bbox
     cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), (0, 255, 0), 2)
     label_position = (min_x, max(min_y - 10, 20))
     cv2.putText(frame, "Hedef", label_position, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-    nose_x, nose_y = detection.nose
-    crosshair_size = 12
-    cv2.line(frame, (nose_x - crosshair_size, nose_y), (nose_x + crosshair_size, nose_y), (0, 0, 255), 2)
-    cv2.line(frame, (nose_x, nose_y - crosshair_size), (nose_x, nose_y + crosshair_size), (0, 0, 255), 2)
+    _draw_crosshair(frame, detection.nose)
 
     if detection.distance_cm:
         text = f"Distance: {detection.distance_cm:.1f} cm"
