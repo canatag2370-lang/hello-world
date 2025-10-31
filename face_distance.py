@@ -1,8 +1,8 @@
 """Webcam face tracker with a nose crosshair and distance estimation.
 
 This script uses MediaPipe's Face Mesh solution to detect facial landmarks,
-draws a bounding box around the detected face, overlays a red crosshair on the
-nose tip, and estimates the distance from the camera in centimeters using a
+draws a bounding box around each detected face, overlays a magenta crosshair on
+the nose tip, and estimates the distance from the camera in centimeters using a
 default camera field-of-view assumption.
 
 Press "q" to quit the application.
@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 import cv2
 import mediapipe as mp
@@ -44,7 +44,7 @@ class FaceDistanceEstimator:
 
         self._mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False,
-            max_num_faces=1,
+            max_num_faces=5,
             refine_landmarks=True,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
@@ -79,25 +79,31 @@ class FaceDistanceEstimator:
 
         return (self._frame_width / 2) / math.tan(math.radians(self.horizontal_fov_degrees / 2))
 
-    def process_frame(self, frame) -> Optional[DetectionResult]:
+    def process_frame(self, frame) -> List[DetectionResult]:
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         result = self._mp_face_mesh.process(rgb_frame)
 
         if not result.multi_face_landmarks:
-            return None
+            return []
 
         height, width, _ = frame.shape
         self._frame_width = width
-        face_landmarks = result.multi_face_landmarks[0].landmark
-        pixel_landmarks = self._landmarks_to_pixels(face_landmarks, width, height)
+        detections = []
 
-        bbox = self._compute_bbox(pixel_landmarks)
-        bbox_width = bbox[2] - bbox[0]
-        distance_cm = self.estimate_distance(bbox_width)
+        for face_landmarks in result.multi_face_landmarks:
+            pixel_landmarks = self._landmarks_to_pixels(face_landmarks.landmark, width, height)
 
-        nose_point = tuple(pixel_landmarks[NOSE_TIP_ID])
+            bbox = self._compute_bbox(pixel_landmarks)
+            bbox_width = bbox[2] - bbox[0]
+            distance_cm = self.estimate_distance(bbox_width)
 
-        return DetectionResult(bbox=bbox, distance_cm=distance_cm, nose=nose_point)
+            nose_point = tuple(pixel_landmarks[NOSE_TIP_ID])
+
+            detections.append(
+                DetectionResult(bbox=bbox, distance_cm=distance_cm, nose=nose_point)
+            )
+
+        return detections
 
 
 def _draw_crosshair(
@@ -122,22 +128,32 @@ def _draw_crosshair(
     cv2.line(frame, (x, y + gap), (x, y + arm_length), color, thickness)
 
 
-def draw_overlays(frame, detection: DetectionResult) -> None:
-    min_x, min_y, max_x, max_y = detection.bbox
-    cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), (0, 255, 0), 2)
-    label_position = (min_x, max(min_y - 10, 20))
-    cv2.putText(frame, "Hedef", label_position, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+def draw_overlays(frame, detections: Iterable[DetectionResult]) -> None:
+    frame_height, frame_width, _ = frame.shape
 
-    _draw_crosshair(frame, detection.nose)
+    for detection in detections:
+        min_x, min_y, max_x, max_y = detection.bbox
+        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), (0, 255, 0), 2)
+        label_position = (min_x, max(min_y - 10, 20))
+        cv2.putText(frame, "Hedef", label_position, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-    if detection.distance_cm:
-        text = f"Distance: {detection.distance_cm:.1f} cm"
-    else:
-        text = "Distance unavailable"
-    cv2.putText(frame, text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+        _draw_crosshair(frame, detection.nose)
+
+        if detection.distance_cm is not None:
+            text = f"{detection.distance_cm:.1f} cm"
+        else:
+            text = "N/A"
+
+        text_size, baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+        text_width, text_height = text_size
+        text_x = max(min_x, min(max_x - text_width, frame_width - text_width - 5))
+        desired_y = max_y + text_height + 6
+        text_y = min(desired_y, frame_height - baseline - 5)
+
+        cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
     instructions = "Press 'q' to quit"
-    cv2.putText(frame, instructions, (20, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
+    cv2.putText(frame, instructions, (20, frame_height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
 
 def parse_args() -> argparse.Namespace:
@@ -178,9 +194,8 @@ def main() -> None:
                 print("Failed to capture frame from camera. Exiting.")
                 break
 
-            detection = estimator.process_frame(frame)
-            if detection:
-                draw_overlays(frame, detection)
+            detections = estimator.process_frame(frame)
+            draw_overlays(frame, detections)
 
             cv2.imshow("Face Distance Estimator", frame)
             key = cv2.waitKey(1) & 0xFF
