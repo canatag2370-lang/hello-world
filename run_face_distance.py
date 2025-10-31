@@ -11,6 +11,7 @@ REQUIRED_PACKAGES = {
     "cv2": "opencv-python",
     "mediapipe": "mediapipe",
     "numpy": "numpy",
+    "deepface": "deepface",
 }
 
 

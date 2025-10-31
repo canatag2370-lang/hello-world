@@ -1,9 +1,11 @@
-"""Webcam face tracker with a nose crosshair and distance estimation.
+"""Webcam face tracker with distance, gender, and age overlays.
 
 This script uses MediaPipe's Face Mesh solution to detect facial landmarks,
 draws a bounding box around each detected face, overlays a magenta crosshair on
 the nose tip, and estimates the distance from the camera in centimeters using a
-default camera field-of-view assumption.
+default camera field-of-view assumption. For each detected face it also
+leverages DeepFace's high-accuracy models to infer gender and age, displaying
+the predictions beneath the bounding box.
 
 Press "q" to quit the application.
 """
@@ -13,7 +15,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import mediapipe as mp
@@ -32,6 +34,125 @@ class DetectionResult:
     bbox: Tuple[int, int, int, int]
     distance_cm: Optional[float]
     nose: Tuple[int, int]
+    gender: Optional[str] = None
+    age: Optional[int] = None
+
+
+class AgeGenderEstimator:
+    """Estimates gender and age for detected faces using DeepFace."""
+
+    def __init__(self, sample_every_n_frames: int = 10, margin_ratio: float = 0.25) -> None:
+        self.sample_every_n_frames = sample_every_n_frames
+        self.margin_ratio = margin_ratio
+        self._frame_counter = 0
+        self._cached_predictions: List[Tuple[Optional[str], Optional[int]]] = []
+        self._deepface = None
+
+    def _ensure_model(self) -> None:
+        if self._deepface is None:
+            from deepface import DeepFace
+
+            self._deepface = DeepFace
+
+    def enrich(self, frame: np.ndarray, detections: Sequence[DetectionResult]) -> None:
+        self._frame_counter += 1
+
+        if not detections:
+            self._cached_predictions = []
+            return
+
+        should_refresh = (
+            self._frame_counter % self.sample_every_n_frames == 0
+            or len(self._cached_predictions) != len(detections)
+        )
+
+        if should_refresh:
+            self._ensure_model()
+            predictions: List[Tuple[Optional[str], Optional[int]]] = []
+            for detection in detections:
+                face_image = self._extract_face(frame, detection.bbox)
+                if face_image.size == 0:
+                    predictions.append((None, None))
+                    continue
+
+                try:
+                    analysis = self._deepface.analyze(
+                        face_image,
+                        actions=("gender", "age"),
+                        enforce_detection=False,
+                        detector_backend="skip",
+                        prog_bar=False,
+                    )
+                except Exception:
+                    predictions.append((None, None))
+                    continue
+
+                if isinstance(analysis, list):
+                    analysis = analysis[0]
+
+                gender_label = self._parse_gender(analysis)
+                age_estimate = self._parse_age(analysis)
+                predictions.append((gender_label, age_estimate))
+
+            self._cached_predictions = predictions
+
+        for detection, (gender, age) in zip(detections, self._cached_predictions):
+            detection.gender = gender
+            detection.age = age
+
+    def _extract_face(
+        self, frame: np.ndarray, bbox: Tuple[int, int, int, int]
+    ) -> np.ndarray:
+        height, width = frame.shape[:2]
+        min_x, min_y, max_x, max_y = bbox
+
+        face_width = max_x - min_x
+        face_height = max_y - min_y
+
+        margin_x = int(face_width * self.margin_ratio)
+        margin_y = int(face_height * self.margin_ratio)
+
+        x1 = max(min_x - margin_x, 0)
+        y1 = max(min_y - margin_y, 0)
+        x2 = min(max_x + margin_x, width)
+        y2 = min(max_y + margin_y, height)
+
+        if x2 <= x1 or y2 <= y1:
+            return np.empty((0, 0, 3), dtype=frame.dtype)
+
+        cropped = frame[y1:y2, x1:x2]
+        return cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
+
+    def _parse_gender(self, analysis: dict) -> Optional[str]:
+        label = analysis.get("dominant_gender")
+        if not label and isinstance(analysis.get("gender"), dict):
+            gender_scores = analysis["gender"]
+            label = max(gender_scores, key=gender_scores.get)
+
+        if not label:
+            return None
+
+        normalized = label.lower()
+        if normalized == "woman":
+            return "Kadın"
+        if normalized == "man":
+            return "Erkek"
+
+        return label
+
+    def _parse_age(self, analysis: dict) -> Optional[int]:
+        age_value = analysis.get("age")
+        if age_value is None and "age" in analysis and isinstance(analysis["age"], dict):
+            age_dict = analysis["age"]
+            age_value = max(age_dict, key=age_dict.get)
+
+        if age_value is None:
+            return None
+
+        try:
+            return int(round(float(age_value)))
+        except (TypeError, ValueError):
+            return None
 
 
 class FaceDistanceEstimator:
@@ -140,17 +261,55 @@ def draw_overlays(frame, detections: Iterable[DetectionResult]) -> None:
         _draw_crosshair(frame, detection.nose)
 
         if detection.distance_cm is not None:
-            text = f"{detection.distance_cm:.1f} cm"
+            distance_text = f"{detection.distance_cm:.1f} cm"
         else:
-            text = "N/A"
+            distance_text = "N/A"
 
-        text_size, baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-        text_width, text_height = text_size
-        text_x = max(min_x, min(max_x - text_width, frame_width - text_width - 5))
-        desired_y = max_y + text_height + 6
-        text_y = min(desired_y, frame_height - baseline - 5)
+        distance_size, distance_baseline = cv2.getTextSize(
+            distance_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2
+        )
+        distance_width, distance_height = distance_size
+        distance_x = max(min_x, min(max_x - distance_width, frame_width - distance_width - 5))
+        desired_y = max_y + distance_height + 6
+        distance_y = min(desired_y, frame_height - distance_baseline - 5)
 
-        cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+        cv2.putText(
+            frame,
+            distance_text,
+            (distance_x, distance_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 0, 0),
+            2,
+        )
+
+        info_parts = []
+        if detection.gender:
+            info_parts.append(detection.gender)
+        if detection.age is not None:
+            info_parts.append(f"{detection.age} yaş")
+
+        if info_parts:
+            info_text = " · ".join(info_parts)
+            info_size, info_baseline = cv2.getTextSize(
+                info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+            )
+            info_width, info_height = info_size
+            info_x = max(
+                min_x,
+                min(max_x - info_width, frame_width - info_width - 5),
+            )
+            info_y = distance_y + info_height + info_baseline + 6
+            info_y = min(info_y, frame_height - info_baseline - 5)
+            cv2.putText(
+                frame,
+                info_text,
+                (info_x, info_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 255),
+                2,
+            )
 
     instructions = "Press 'q' to quit"
     cv2.putText(frame, instructions, (20, frame_height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
@@ -182,6 +341,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     estimator = FaceDistanceEstimator(args.known_face_width, args.horizontal_fov)
+    age_gender_estimator = AgeGenderEstimator()
 
     cap = cv2.VideoCapture(args.camera_index)
     if not cap.isOpened():
@@ -195,6 +355,7 @@ def main() -> None:
                 break
 
             detections = estimator.process_frame(frame)
+            age_gender_estimator.enrich(frame, detections)
             draw_overlays(frame, detections)
 
             cv2.imshow("Face Distance Estimator", frame)
