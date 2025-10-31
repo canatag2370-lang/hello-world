@@ -1,9 +1,9 @@
-"""Webcam face tracker with facial landmarks and distance estimation.
+"""Webcam face tracker with a nose crosshair and distance estimation.
 
 This script uses MediaPipe's Face Mesh solution to detect facial landmarks,
-draws a bounding box around the detected face, highlights key facial points,
-and estimates the distance from the camera in centimeters using a default
-camera field-of-view assumption.
+draws a bounding box around the detected face, overlays a red crosshair on the
+nose tip, and estimates the distance from the camera in centimeters using a
+default camera field-of-view assumption.
 
 Press "q" to quit the application.
 """
@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 import cv2
 import mediapipe as mp
@@ -21,14 +21,8 @@ import numpy as np
 from mediapipe.framework.formats import landmark_pb2
 
 
-# MediaPipe Face Mesh landmark indices for key facial features.
-LANDMARK_IDS: Dict[str, int] = {
-    "nose_tip": 1,
-    "left_cheek": 234,
-    "right_cheek": 454,
-    "chin": 152,
-    "forehead": 10,
-}
+# MediaPipe Face Mesh landmark index for the nose tip.
+NOSE_TIP_ID = 1
 
 
 @dataclass
@@ -37,7 +31,7 @@ class DetectionResult:
 
     bbox: Tuple[int, int, int, int]
     distance_cm: Optional[float]
-    landmarks: Dict[str, Tuple[int, int]]
+    nose: Tuple[int, int]
 
 
 class FaceDistanceEstimator:
@@ -101,11 +95,9 @@ class FaceDistanceEstimator:
         bbox_width = bbox[2] - bbox[0]
         distance_cm = self.estimate_distance(bbox_width)
 
-        key_landmarks = {
-            name: tuple(pixel_landmarks[idx]) for name, idx in LANDMARK_IDS.items()
-        }
+        nose_point = tuple(pixel_landmarks[NOSE_TIP_ID])
 
-        return DetectionResult(bbox=bbox, distance_cm=distance_cm, landmarks=key_landmarks)
+        return DetectionResult(bbox=bbox, distance_cm=distance_cm, nose=nose_point)
 
 
 def draw_overlays(frame, detection: DetectionResult) -> None:
@@ -114,8 +106,10 @@ def draw_overlays(frame, detection: DetectionResult) -> None:
     label_position = (min_x, max(min_y - 10, 20))
     cv2.putText(frame, "Hedef", label_position, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-    for (x, y) in detection.landmarks.values():
-        cv2.circle(frame, (x, y), 3, (0, 0, 255), -1)
+    nose_x, nose_y = detection.nose
+    crosshair_size = 12
+    cv2.line(frame, (nose_x - crosshair_size, nose_y), (nose_x + crosshair_size, nose_y), (0, 0, 255), 2)
+    cv2.line(frame, (nose_x, nose_y - crosshair_size), (nose_x, nose_y + crosshair_size), (0, 0, 255), 2)
 
     if detection.distance_cm:
         text = f"Distance: {detection.distance_cm:.1f} cm"

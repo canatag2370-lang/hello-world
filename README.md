@@ -1,9 +1,8 @@
 # Face Distance Estimator
 
 This repository contains a Python script that tracks a face with your laptop
-camera, highlights key facial landmarks such as the nose and cheekbones, draws a
-bounding box around the face, and estimates how far you are from the camera in
-centimeters.
+camera, places a red crosshair on the tip of your nose, draws a bounding box
+around the face, and estimates how far you are from the camera in centimeters.
 
 ## Quick start (Windows, macOS, or Linux)
 
@@ -27,9 +26,9 @@ centimeters.
 
    On Windows, if `python` is not found, try `py run_face_distance.py` instead.
 5. Grant camera access if your system asks for permission. When the window
-   opens, you should see the face landmarks, the green box with the red “Hedef”
-   label, and the distance estimate in centimeters. Press `q` to close the
-   window when you are done.
+   opens, you should see the green box with the red “Hedef” label, a red
+   crosshair centered on your nose, and the distance estimate in centimeters.
+   Press `q` to close the window when you are done.
 
 ### Running the script directly
 
