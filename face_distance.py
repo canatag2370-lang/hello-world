@@ -1,17 +1,17 @@
 """Webcam face tracker with facial landmarks and distance estimation.
 
 This script uses MediaPipe's Face Mesh solution to detect facial landmarks,
-draws a bounding box around the detected face, highlights key facial points
-(nose tip, cheekbones, chin, and forehead), and estimates the distance from the
-camera in centimeters.
+draws a bounding box around the detected face, highlights key facial points,
+and estimates the distance from the camera in centimeters using a default
+camera field-of-view assumption.
 
-Press "c" to calibrate the focal length while your face is at a known distance.
 Press "q" to quit the application.
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Tuple
 
@@ -43,10 +43,10 @@ class DetectionResult:
 class FaceDistanceEstimator:
     """Tracks a face and estimates the distance from the camera."""
 
-    def __init__(self, known_face_width_cm: float, calibration_distance_cm: float) -> None:
+    def __init__(self, known_face_width_cm: float, horizontal_fov_degrees: float) -> None:
         self.known_face_width_cm = known_face_width_cm
-        self.calibration_distance_cm = calibration_distance_cm
-        self.focal_length: Optional[float] = None
+        self.horizontal_fov_degrees = horizontal_fov_degrees
+        self._frame_width: Optional[int] = None
 
         self._mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False,
@@ -69,24 +69,21 @@ class FaceDistanceEstimator:
         max_y = int(np.max(landmarks[:, 1]))
         return min_x, min_y, max_x, max_y
 
-    def calibrate(self, bbox_width_pixels: float) -> None:
-        """Calibrate the focal length using a bounding box width measurement."""
-
-        self.focal_length = (bbox_width_pixels * self.calibration_distance_cm) / self.known_face_width_cm
-        print(
-            f"Calibrated focal length: {self.focal_length:.2f} (px)."
-            " Keep your calibration constants consistent for accurate results."
-        )
-
     def estimate_distance(self, bbox_width_pixels: float) -> Optional[float]:
-        if not self.focal_length:
-            return None
-
         if bbox_width_pixels <= 0:
             return None
 
-        distance = (self.known_face_width_cm * self.focal_length) / bbox_width_pixels
+        focal_length = self._compute_focal_length_px()
+        distance = (self.known_face_width_cm * focal_length) / bbox_width_pixels
         return distance
+
+    def _compute_focal_length_px(self) -> float:
+        """Compute focal length in pixels based on frame width and FOV."""
+
+        if self._frame_width is None:
+            raise RuntimeError("Frame width unavailable for focal length computation.")
+
+        return (self._frame_width / 2) / math.tan(math.radians(self.horizontal_fov_degrees / 2))
 
     def process_frame(self, frame) -> Optional[DetectionResult]:
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -96,6 +93,7 @@ class FaceDistanceEstimator:
             return None
 
         height, width, _ = frame.shape
+        self._frame_width = width
         face_landmarks = result.multi_face_landmarks[0].landmark
         pixel_landmarks = self._landmarks_to_pixels(face_landmarks, width, height)
 
@@ -113,18 +111,19 @@ class FaceDistanceEstimator:
 def draw_overlays(frame, detection: DetectionResult) -> None:
     min_x, min_y, max_x, max_y = detection.bbox
     cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), (0, 255, 0), 2)
+    label_position = (min_x, max(min_y - 10, 20))
+    cv2.putText(frame, "Hedef", label_position, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-    for name, (x, y) in detection.landmarks.items():
+    for (x, y) in detection.landmarks.values():
         cv2.circle(frame, (x, y), 3, (0, 0, 255), -1)
-        cv2.putText(frame, name.replace("_", " "), (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
 
     if detection.distance_cm:
         text = f"Distance: {detection.distance_cm:.1f} cm"
     else:
-        text = "Press 'c' to calibrate distance"
+        text = "Distance unavailable"
     cv2.putText(frame, text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
 
-    instructions = "Press 'c' to calibrate, 'q' to quit"
+    instructions = "Press 'q' to quit"
     cv2.putText(frame, instructions, (20, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
 
 
@@ -143,17 +142,17 @@ def parse_args() -> argparse.Namespace:
         help="Approximate width of your face in centimeters (default: 16.0 cm)",
     )
     parser.add_argument(
-        "--calibration-distance",
+        "--horizontal-fov",
         type=float,
-        default=50.0,
-        help="Distance in centimeters used when pressing 'c' to calibrate (default: 50 cm)",
+        default=60.0,
+        help="Approximate horizontal field of view of your camera in degrees (default: 60°)",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    estimator = FaceDistanceEstimator(args.known_face_width, args.calibration_distance)
+    estimator = FaceDistanceEstimator(args.known_face_width, args.horizontal_fov)
 
     cap = cv2.VideoCapture(args.camera_index)
     if not cap.isOpened():
@@ -175,10 +174,6 @@ def main() -> None:
 
             if key == ord("q"):
                 break
-            if key == ord("c") and detection:
-                bbox_width = detection.bbox[2] - detection.bbox[0]
-                estimator.calibrate(bbox_width)
-
     finally:
         cap.release()
         cv2.destroyAllWindows()

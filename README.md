@@ -21,18 +21,15 @@ Run the script and grant access to your webcam:
 python face_distance.py
 ```
 
-While the application is running:
+While the application is running, press `q` to quit the application.
 
-* Position your face at a known distance from the camera and press `c` to
-  calibrate the distance calculation.
-* Press `q` to quit the application.
-
-Command-line options are available to change the camera index, face width used
-for distance estimation, and the calibration distance:
+Command-line options are available to change the camera index, the assumed face
+width, and the horizontal field of view used for the distance estimate:
 
 ```bash
-python face_distance.py --camera-index 0 --known-face-width 16.0 --calibration-distance 50.0
+python face_distance.py --camera-index 0 --known-face-width 16.0 --horizontal-fov 60.0
 ```
 
 Adjust the numbers based on your camera setup and your own measurements for more
-accurate results.
+accurate results. The distance estimate is calculated automatically using the
+provided field-of-view value.
