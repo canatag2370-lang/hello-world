@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import subprocess
+import sys
 import math
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -50,6 +52,7 @@ class AgeGenderEstimator:
         self._deepface = None
         self._warning_emitted = False
         self._deepface_available = True
+        self._auto_install_attempted = False
 
     def _ensure_model(self) -> None:
         if self._deepface is not None or not self._deepface_available:
@@ -58,6 +61,9 @@ class AgeGenderEstimator:
         try:
             deepface_module = importlib.import_module("deepface")
         except ModuleNotFoundError:
+            if not self._auto_install_attempted and self._attempt_install("deepface"):
+                return self._ensure_model()
+
             self._log_warning(
                 "DeepFace paketi bulunamadı. Lütfen `python run_face_distance.py`"
                 " komutunu çalıştırarak bağımlılıkları otomatik kurun veya"
@@ -83,6 +89,32 @@ class AgeGenderEstimator:
             return
 
         self._deepface = deepface_class
+
+    def _attempt_install(self, package: str) -> bool:
+        self._auto_install_attempted = True
+        print(
+            "[AgeGenderEstimator] DeepFace paketi bulunamadı."
+            " Otomatik kurulum başlatılıyor..."
+        )
+
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        except subprocess.CalledProcessError as exc:
+            print(
+                "[AgeGenderEstimator] DeepFace kurulumu başarısız oldu."
+                f" Ayrıntı kodu: {exc.returncode}"
+            )
+            return False
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                "[AgeGenderEstimator] DeepFace kurulumu sırasında beklenmeyen bir hata"
+                f" oluştu: {exc}"
+            )
+            return False
+
+        print("[AgeGenderEstimator] DeepFace kurulumu tamamlandı.")
+        self._deepface_available = True
+        return True
 
     def enrich(self, frame: np.ndarray, detections: Sequence[DetectionResult]) -> None:
         self._frame_counter += 1
