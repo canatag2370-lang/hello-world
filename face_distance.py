@@ -13,6 +13,9 @@ Press "q" to quit the application.
 from __future__ import annotations
 
 import argparse
+import importlib
+import subprocess
+import sys
 import math
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -48,12 +51,70 @@ class AgeGenderEstimator:
         self._cached_predictions: List[Tuple[Optional[str], Optional[int]]] = []
         self._deepface = None
         self._warning_emitted = False
+        self._deepface_available = True
+        self._auto_install_attempted = False
 
     def _ensure_model(self) -> None:
-        if self._deepface is None:
-            from deepface import DeepFace
+        if self._deepface is not None or not self._deepface_available:
+            return
 
-            self._deepface = DeepFace
+        try:
+            deepface_module = importlib.import_module("deepface")
+        except ModuleNotFoundError:
+            if not self._auto_install_attempted and self._attempt_install("deepface"):
+                return self._ensure_model()
+
+            self._log_warning(
+                "DeepFace paketi bulunamadı. Lütfen `python run_face_distance.py`"
+                " komutunu çalıştırarak bağımlılıkları otomatik kurun veya"
+                " manuel olarak `pip install deepface` komutunu yürütün."
+            )
+            self._deepface_available = False
+            return
+        except ImportError as exc:
+            self._log_warning(
+                "DeepFace kütüphanesi yüklenirken hata oluştu. Lütfen kurulumun"
+                " tamamlandığından emin olun. Ayrıntı:" f" {exc}"
+            )
+            self._deepface_available = False
+            return
+
+        deepface_class = getattr(deepface_module, "DeepFace", None)
+        if deepface_class is None:
+            self._log_warning(
+                "DeepFace kütüphanesi yüklü fakat `DeepFace` sınıfı bulunamadı."
+                " Kurulumu yeniden yapmayı deneyin."
+            )
+            self._deepface_available = False
+            return
+
+        self._deepface = deepface_class
+
+    def _attempt_install(self, package: str) -> bool:
+        self._auto_install_attempted = True
+        print(
+            "[AgeGenderEstimator] DeepFace paketi bulunamadı."
+            " Otomatik kurulum başlatılıyor..."
+        )
+
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+        except subprocess.CalledProcessError as exc:
+            print(
+                "[AgeGenderEstimator] DeepFace kurulumu başarısız oldu."
+                f" Ayrıntı kodu: {exc.returncode}"
+            )
+            return False
+        except Exception as exc:  # pragma: no cover - defensive
+            print(
+                "[AgeGenderEstimator] DeepFace kurulumu sırasında beklenmeyen bir hata"
+                f" oluştu: {exc}"
+            )
+            return False
+
+        print("[AgeGenderEstimator] DeepFace kurulumu tamamlandı.")
+        self._deepface_available = True
+        return True
 
     def enrich(self, frame: np.ndarray, detections: Sequence[DetectionResult]) -> None:
         self._frame_counter += 1
@@ -70,35 +131,39 @@ class AgeGenderEstimator:
         if should_refresh:
             self._ensure_model()
             predictions: List[Tuple[Optional[str], Optional[int]]] = []
-            for detection in detections:
-                face_image = self._extract_face(frame, detection.bbox)
-                if face_image.size == 0:
-                    predictions.append((None, None))
-                    continue
 
-                try:
-                    analysis = self._deepface.analyze(
-                        face_image,
-                        actions=("gender", "age"),
-                        enforce_detection=False,
-                        detector_backend="skip",
-                        prog_bar=False,
-                    )
-                except Exception as exc:
-                    self._log_warning(
-                        "DeepFace analizinde hata oluştu. Lütfen TensorFlow ve DeepFace"
-                        " bağımlılıklarının tam kurulduğunu kontrol edin. Ayrıntı:"
-                        f" {exc}"
-                    )
-                    predictions.append((None, None))
-                    continue
+            if not self._deepface_available or self._deepface is None:
+                predictions = [(None, None)] * len(detections)
+            else:
+                for detection in detections:
+                    face_image = self._extract_face(frame, detection.bbox)
+                    if face_image.size == 0:
+                        predictions.append((None, None))
+                        continue
 
-                if isinstance(analysis, list):
-                    analysis = analysis[0]
+                    try:
+                        analysis = self._deepface.analyze(
+                            face_image,
+                            actions=("gender", "age"),
+                            enforce_detection=False,
+                            detector_backend="skip",
+                            prog_bar=False,
+                        )
+                    except Exception as exc:
+                        self._log_warning(
+                            "DeepFace analizinde hata oluştu. Lütfen TensorFlow ve DeepFace"
+                            " bağımlılıklarının tam kurulduğunu kontrol edin. Ayrıntı:"
+                            f" {exc}"
+                        )
+                        predictions.append((None, None))
+                        continue
 
-                gender_label = self._parse_gender(analysis)
-                age_estimate = self._parse_age(analysis)
-                predictions.append((gender_label, age_estimate))
+                    if isinstance(analysis, list):
+                        analysis = analysis[0]
+
+                    gender_label = self._parse_gender(analysis)
+                    age_estimate = self._parse_age(analysis)
+                    predictions.append((gender_label, age_estimate))
 
             self._cached_predictions = predictions
 
