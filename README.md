@@ -37,7 +37,9 @@ box using DeepFace's state-of-the-art models.
 
    If the yellow age/gender line does not appear, check the terminal once:
    the app prints a one-time warning if DeepFace or TensorFlow is missing so
-   you know which dependency to install.
+   you know which dependency to install. Eğer `ModuleNotFoundError: No module`
+   `named 'deepface'` hatasını görürseniz, yukarıdaki komutu tekrar çalıştırın
+   veya `pip install deepface` komutuyla paketi kurun.
 
 > **Note:** The first run may take a little longer because DeepFace downloads
 > pretrained weights for its high-accuracy models. Subsequent runs will start
