@@ -13,6 +13,7 @@ Press "q" to quit the application.
 from __future__ import annotations
 
 import argparse
+import importlib
 import math
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -55,7 +56,7 @@ class AgeGenderEstimator:
             return
 
         try:
-            from deepface import DeepFace
+            deepface_module = importlib.import_module("deepface")
         except ModuleNotFoundError:
             self._log_warning(
                 "DeepFace paketi bulunamadı. Lütfen `python run_face_distance.py`"
@@ -64,8 +65,24 @@ class AgeGenderEstimator:
             )
             self._deepface_available = False
             return
+        except ImportError as exc:
+            self._log_warning(
+                "DeepFace kütüphanesi yüklenirken hata oluştu. Lütfen kurulumun"
+                " tamamlandığından emin olun. Ayrıntı:" f" {exc}"
+            )
+            self._deepface_available = False
+            return
 
-        self._deepface = DeepFace
+        deepface_class = getattr(deepface_module, "DeepFace", None)
+        if deepface_class is None:
+            self._log_warning(
+                "DeepFace kütüphanesi yüklü fakat `DeepFace` sınıfı bulunamadı."
+                " Kurulumu yeniden yapmayı deneyin."
+            )
+            self._deepface_available = False
+            return
+
+        self._deepface = deepface_class
 
     def enrich(self, frame: np.ndarray, detections: Sequence[DetectionResult]) -> None:
         self._frame_counter += 1
