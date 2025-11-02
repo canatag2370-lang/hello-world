@@ -47,6 +47,7 @@ class AgeGenderEstimator:
         self._frame_counter = 0
         self._cached_predictions: List[Tuple[Optional[str], Optional[int]]] = []
         self._deepface = None
+        self._warning_emitted = False
 
     def _ensure_model(self) -> None:
         if self._deepface is None:
@@ -83,7 +84,12 @@ class AgeGenderEstimator:
                         detector_backend="skip",
                         prog_bar=False,
                     )
-                except Exception:
+                except Exception as exc:
+                    self._log_warning(
+                        "DeepFace analizinde hata oluştu. Lütfen TensorFlow ve DeepFace"
+                        " bağımlılıklarının tam kurulduğunu kontrol edin. Ayrıntı:"
+                        f" {exc}"
+                    )
                     predictions.append((None, None))
                     continue
 
@@ -99,6 +105,12 @@ class AgeGenderEstimator:
         for detection, (gender, age) in zip(detections, self._cached_predictions):
             detection.gender = gender
             detection.age = age
+
+    def _log_warning(self, message: str) -> None:
+        if self._warning_emitted:
+            return
+        print(f"[AgeGenderEstimator] {message}")
+        self._warning_emitted = True
 
     def _extract_face(
         self, frame: np.ndarray, bbox: Tuple[int, int, int, int]
@@ -269,7 +281,8 @@ def draw_overlays(frame, detections: Iterable[DetectionResult]) -> None:
             distance_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2
         )
         distance_width, distance_height = distance_size
-        distance_x = max(min_x, min(max_x - distance_width, frame_width - distance_width - 5))
+        distance_x = min(max_x - distance_width, frame_width - distance_width - 5)
+        distance_x = max(distance_x, 5)
         desired_y = max_y + distance_height + 6
         distance_y = min(desired_y, frame_height - distance_baseline - 5)
 
@@ -295,10 +308,8 @@ def draw_overlays(frame, detections: Iterable[DetectionResult]) -> None:
                 info_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
             )
             info_width, info_height = info_size
-            info_x = max(
-                min_x,
-                min(max_x - info_width, frame_width - info_width - 5),
-            )
+            info_x = min(max_x - info_width, frame_width - info_width - 5)
+            info_x = max(info_x, 5)
             info_y = distance_y + info_height + info_baseline + 6
             info_y = min(info_y, frame_height - info_baseline - 5)
             cv2.putText(

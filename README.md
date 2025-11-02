@@ -31,9 +31,13 @@ box using DeepFace's state-of-the-art models.
 5. Grant camera access if your system asks for permission. When the window
    opens, you should see green boxes with the red “Hedef” label, a magenta
    crosshair centered on each nose with a small gap in the middle, a blue
-   distance readout in centimeters near the bottom-right corner of every box,
+   distance readout in centimeters hugging the lower-right side of every box,
    and a yellow line underneath the box showing the predicted gender and age.
    Press `q` to close the window when you are done.
+
+   If the yellow age/gender line does not appear, check the terminal once:
+   the app prints a one-time warning if DeepFace or TensorFlow is missing so
+   you know which dependency to install.
 
 > **Note:** The first run may take a little longer because DeepFace downloads
 > pretrained weights for its high-accuracy models. Subsequent runs will start
